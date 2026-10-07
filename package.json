@@ -1,0 +1,18 @@
+{
+  "name": "@zdavison/claude-accounts",
+  "version": "0.1.0",
+  "description": "Use several Claude Code accounts on one machine: the account is picked by directory and shown in the CLI and Zed",
+  "keywords": ["claude", "claude-code", "accounts", "mise", "zed"],
+  "license": "MIT",
+  "author": "Zachary Davison",
+  "repository": { "type": "git", "url": "git+https://github.com/zdavison/claude-accounts.git" },
+  "homepage": "https://github.com/zdavison/claude-accounts#readme",
+  "bin": { "claude-accounts": "bin/claude-accounts" },
+  "files": [
+    "bin",
+    ".claude-plugin",
+    "plugin/account-badge",
+    "!plugin/account-badge/tests"
+  ],
+  "os": ["darwin", "linux"]
+}

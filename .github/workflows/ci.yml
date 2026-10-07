@@ -1,5 +1,5 @@
 name: ci
-on: [push, pull_request]
+on: [push, pull_request, workflow_call]
 
 jobs:
   shell:
@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v2
-      - run: shellcheck bin/claude-accounts plugin/account-badge/scripts/resolve plugin/account-badge/scripts/notice test/stubs/*
+      - run: shellcheck bin/claude-accounts plugin/account-badge/scripts/resolve plugin/account-badge/scripts/notice scripts/set-version test/stubs/*
       - run: bats test
 
   plugin:

@@ -1,0 +1,2 @@
+# Nothing to build: the package is shell scripts and the plugin as-is
+skip-build

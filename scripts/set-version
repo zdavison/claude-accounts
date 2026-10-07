@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# set-version patch|minor|major|X.Y.Z: set the release version in package.json and the plugin's
+# plugin.json, commit it as pubz would, and print it. pubz only bumps package.json, and Claude Code
+# caches plugins by plugin.json's version, so run this first and hand the version to pubz.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+PKG=package.json
+PLUGIN=plugin/account-badge/.claude-plugin/plugin.json
+
+die() { echo "set-version: $*" >&2; exit 1; }
+
+current="$(jq -r .version "$PKG")"
+IFS=. read -r major minor patch <<<"${current%%-*}"
+case "${1:-}" in
+  patch) next="$major.$minor.$((patch + 1))" ;;
+  minor) next="$major.$((minor + 1)).0" ;;
+  major) next="$((major + 1)).0.0" ;;
+  *)
+    next="${1#v}"
+    [[ "$next" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+      || die "expected patch, minor, major or a version like 1.2.3, got '${1:-}'"
+    ;;
+esac
+
+if [ "$next" != "$current" ] || [ "$(jq -r .version "$PLUGIN")" != "$next" ]; then
+  for f in "$PKG" "$PLUGIN"; do
+    jq --arg v "$next" '.version = $v' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  done
+  git add "$PKG" "$PLUGIN"
+  git commit -q -m "chore: release v$next"
+fi
+echo "$next"

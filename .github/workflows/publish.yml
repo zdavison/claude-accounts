@@ -1,0 +1,44 @@
+name: publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version bump type or explicit version
+        required: true
+        type: choice
+        options: [patch, minor, major]
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # release commit, tag and GitHub release
+      id-token: write   # npm trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # pubz builds the changelog from the previous tag
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      # pubz bumps only package.json; set-version also bumps the plugin and commits both
+      - name: Set version
+        id: version
+        run: echo "version=$(scripts/set-version ${{ inputs.version }})" >> "$GITHUB_OUTPUT"
+      - name: Publish
+        run: bunx pubz --ci --version ${{ steps.version.outputs.version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Push changes
+        run: git push && git push --tags
