@@ -29,17 +29,25 @@ once per account (with that account's `CLAUDE_CONFIG_DIR`).
 ## Set up
 
 ```sh
+claude-accounts setup
+```
+It asks which accounts you want and, for each one, its label, emoji, Claude config dir and the
+directories it owns. Then it applies the config, offers to sign in each account, and offers to
+add the Zed wrapper to your shell rc. Run it again to add accounts or start over.
+Afterwards, open a new shell and check everything with `claude-accounts doctor`.
+
+To script it instead (e.g. in a dotfiles install script):
+```sh
 claude-accounts init                                   # personal account, ~/.claude
 claude-accounts add work --dir ~/Work/acme --emoji 🔴  # uses ~/.claude-work
 claude-accounts apply
 claude-accounts login work
 ```
-Add the Zed wrapper to your shell rc:
+and add the Zed wrapper to your shell rc:
 ```sh
 claude-accounts shell-init fish | source          # fish
 eval "$(claude-accounts shell-init bash)"         # bash / zsh (use zsh for zsh)
 ```
-Then check everything with `claude-accounts doctor`.
 
 ## How it works
 
@@ -57,7 +65,8 @@ Then check everything with `claude-accounts doctor`.
 
 | Command | |
 |---|---|
-| `init` | Create the config with a personal account |
+| `setup` | Interactive walkthrough: choose accounts, apply, sign in, shell rc |
+| `init` | Create the config with a personal account, no questions |
 | `add <name> [--dir PATH]… [--label L] [--emoji E] [--config-dir D]` | Add an account |
 | `remove <name>` | Remove an account (its config dir is kept) |
 | `set <name> label\|emoji\|configDir\|dirs+\|dirs- <value>` | Change an account |

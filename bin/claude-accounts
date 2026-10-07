@@ -60,8 +60,8 @@ valid_name() {
 # machine. Call it as an assignment, so a failure stops the script.
 # shellcheck disable=SC2088  # the literal ~ is what gets stored
 store_path() {
-  local p="$1"
-  case "$p" in "~") p="$HOME" ;; "~/"*) p="$HOME/${p#"~/"}" ;; /*) ;; *) p="$PWD/$p" ;; esac
+  local p
+  p="$(expand_path "$1")"
   if [ -d "$p" ]; then
     p="$(cd "$p" && pwd -P)"
   else
@@ -70,6 +70,19 @@ store_path() {
   case "$p" in "$HOME") p="~" ;; "$HOME"/*) p="~/${p#"$HOME"/}" ;; esac
   [ "$p" = "/" ] || p="${p%/}"
   printf '%s' "$p"
+}
+
+# expand_path PATH: ~ expanded and made absolute, nothing resolved
+# shellcheck disable=SC2088  # matching a literal ~ typed by the user
+expand_path() {
+  case "$1" in "~") printf '%s' "$HOME" ;; "~/"*) printf '%s' "$HOME/${1#"~/"}" ;; /*) printf '%s' "$1" ;; *) printf '%s' "$PWD/$1" ;; esac
+}
+
+# signed_in CONFIGDIR: true when that account has signed in (~/.claude keeps its state in ~/.claude.json)
+signed_in() {
+  local state="$1/.claude.json"
+  [ "$1" != "$HOME/.claude" ] || state="$HOME/.claude.json"
+  jq -e '.oauthAccount.emailAddress' "$state" >/dev/null 2>&1
 }
 
 # claude_as CONFIGDIR ARGS...: run claude as an account; ~/.claude means CLAUDE_CONFIG_DIR unset
@@ -283,7 +296,7 @@ ok() { printf '✔ %s\n' "$1"; }
 bad() { printf '✘ %s\n    fix: %s\n' "$1" "$2"; DOCTOR_FAILED=1; }
 
 cmd_doctor() {
-  local t v problems name dir cdir got state r
+  local t v problems name dir cdir got r
   for t in mise claude; do
     if command -v "$t" >/dev/null 2>&1; then ok "$t installed"; else bad "$t not installed" "install $t"; fi
   done
@@ -313,8 +326,7 @@ cmd_doctor() {
   fi
 
   while IFS=$'\t' read -r name cdir <&3; do
-    if [ "$cdir" = "$HOME/.claude" ]; then state="$HOME/.claude.json"; else state="$cdir/.claude.json"; fi
-    if jq -e '.oauthAccount.emailAddress' "$state" >/dev/null 2>&1; then ok "$name: logged in"
+    if signed_in "$cdir"; then ok "$name: logged in"
     else bad "$name: not logged in" "claude-accounts login $name"; fi
     if command -v claude >/dev/null 2>&1 && plugin_installed "$cdir"; then ok "$name: account-badge installed"
     else bad "$name: account-badge not installed" "claude-accounts apply"; fi
@@ -329,11 +341,209 @@ cmd_doctor() {
   return "$DOCTOR_FAILED"
 }
 
+# ---- setup: an interactive walk through init, add, apply, login and the shell rc ----
+
+NO_ANSWER="no answer (setup asks its questions on the terminal)"
+
+# ask VAR PROMPT [DEFAULT]: one answer, or DEFAULT when it is left empty
+ask() {
+  local a
+  if [ -n "${3:-}" ]; then printf '%s [%s]: ' "$2" "$3"; else printf '%s: ' "$2"; fi
+  IFS= read -r a || { echo; die "$NO_ANSWER"; }
+  printf -v "$1" '%s' "${a:-${3:-}}"
+}
+
+# confirm PROMPT y|n: yes or no, with the given default
+confirm() {
+  local a hint="[Y/n]"
+  [ "$2" = y ] || hint="[y/N]"
+  while :; do
+    printf '%s %s: ' "$1" "$hint"
+    IFS= read -r a || { echo; die "$NO_ANSWER"; }
+    case "${a:-$2}" in [Yy]|[Yy][Ee][Ss]) return 0 ;; [Nn]|[Nn][Oo]) return 1 ;; esac
+    echo "  Please answer y or n."
+  done
+}
+
+# fails CMD...: run a check in a subshell; on failure print its message and succeed
+fails() {
+  local msg
+  if msg="$( ("$@") 2>&1)"; then return 1; fi
+  printf '  ✘ %s\n' "${msg#claude-accounts: }"
+}
+
+# draft_with JQ-ARGS... FILTER: the draft config with FILTER applied, or fail printing its problems
+draft_with() {
+  local next problems
+  next="$(jql -c "$@" <<<"$DRAFT")" || return 1
+  problems="$(jql -r "$CHECK" <<<"$next")"
+  if [ -n "$problems" ]; then printf '  ✘ %s\n' "$problems" >&2; return 1; fi
+  printf '%s' "$next"
+}
+
+# tilde PATH: PATH with $HOME shown as ~
+# shellcheck disable=SC2088  # the literal ~ is what gets shown
+tilde() { case "$1" in "$HOME"/*) printf '~/%s' "${1#"$HOME"/}" ;; *) printf '%s' "$1" ;; esac; }
+
+upper() { printf '%s' "$1" | tr '[:lower:]' '[:upper:]'; }
+
+# The first of these emoji no account in the draft uses yet
+next_emoji() {
+  local e
+  for e in 🔴 🔵 🟣 🟠 🟡 🟤 ⚪; do
+    jq -e --arg e "$e" 'any(.accounts[]; .emoji == $e)' <<<"$DRAFT" >/dev/null || { printf '%s' "$e"; return; }
+  done
+  printf '%s' 🔵
+}
+
+# setup_account DEFAULT-NAME IS-DEFAULT: ask for one account and add it to the draft
+setup_account() {
+  local name label emoji suggest cdir dir path next ndirs=0
+  while :; do
+    ask name "  Account name" "$1"
+    if [ -z "$name" ]; then echo "  ✘ the account needs a name"; continue; fi
+    fails valid_name "$name" && continue
+    if jq -e --arg n "$name" '.accounts | has($n)' <<<"$DRAFT" >/dev/null; then
+      echo "  ✘ there is already an account called $name"; continue
+    fi
+    break
+  done
+  [ "$2" = false ] || DRAFT="$(jq -c --arg n "$name" '.default = $n' <<<"$DRAFT")"
+  ask label "  Label" "$(upper "$name")"
+  if [ "$2" = true ]; then ask emoji "  Emoji" 🟢; else ask emoji "  Emoji" "$(next_emoji)"; fi
+  # shellcheck disable=SC2088  # shown to the user as typed
+  if [ "$2" = true ]; then suggest="~/.claude"; else suggest="~/.claude-$name"; fi
+  while :; do
+    ask cdir "  Claude config dir" "$suggest"
+    fails store_path "$cdir" && continue
+    path="$(store_path "$cdir")"
+    next="$(draft_with --arg n "$name" --arg l "$label" --arg e "$emoji" --arg c "$path" \
+      '.accounts[$n] = {label: $l, emoji: $e, configDir: $c}' 2>&1)" || { printf '%s\n' "$next"; continue; }
+    DRAFT="$next"
+    break
+  done
+  [ "$2" = false ] || return 0
+
+  echo "  Which directories belong to $name? Claude Code uses $name anywhere under them."
+  while :; do
+    ask dir "  Directory (empty when done)" ""
+    if [ -z "$dir" ]; then
+      [ "$ndirs" -gt 0 ] && break
+      echo "  ✘ $name needs at least one directory"; continue
+    fi
+    path="$(expand_path "$dir")"
+    if [ ! -d "$path" ]; then
+      confirm "  $dir doesn't exist. Create it?" y || continue
+      mkdir -p "$path" || { echo "  ✘ could not create $dir"; continue; }
+    fi
+    fails store_path "$dir" && continue
+    path="$(store_path "$dir")"
+    next="$(draft_with --arg n "$name" --arg d "$path" '.accounts[$n].dirs = ((.accounts[$n].dirs // []) + [$d])' 2>&1)" \
+      || { printf '%s\n' "$next"; continue; }
+    DRAFT="$next"
+    ndirs=$((ndirs + 1))
+  done
+}
+
+show_accounts() {
+  jq -r '.default as $d | .accounts | to_entries[]
+    | "  \(.value.emoji // "🔵") \(.value.label // (.key | ascii_upcase))  (\(.key))  \(.value.configDir // "")"
+      + (if .key == $d then "  default: used everywhere else" else "  for " + ((.value.dirs // []) | join(", ")) end)' <<<"$1"
+}
+
+# offer_shell_rc: add the shell-init line to the user's shell rc, once
+offer_shell_rc() {
+  local shell rc line
+  local shown
+  shell="$(basename "${SHELL:-}")"
+  case "$shell" in
+    fish) rc="${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish"; line='claude-accounts shell-init fish | source' ;;
+    bash) rc="$HOME/.bashrc"; line='eval "$(claude-accounts shell-init bash)"' ;;
+    zsh) rc="${ZDOTDIR:-$HOME}/.zshrc"; line='eval "$(claude-accounts shell-init zsh)"' ;;
+    *) echo "Add the Zed wrapper to your shell rc: see claude-accounts shell-init"; return 0 ;;
+  esac
+  shown="$(tilde "$rc")"
+  if grep -q 'claude-accounts shell-init' "$rc" 2>/dev/null; then
+    echo "✔ $shown already loads claude-accounts shell-init"; return 0
+  fi
+  echo "Zed keeps the environment it starts with, so it must start without an account's CLAUDE_CONFIG_DIR."
+  if confirm "Add '$line' to $shown?" y; then
+    mkdir -p "$(dirname "$rc")"
+    printf '\n# Start Zed without an account'"'"'s CLAUDE_CONFIG_DIR (claude-accounts)\n%s\n' "$line" >> "$rc"
+    echo "✔ added to $shown"
+  else
+    echo "  Skipped. Add it yourself later: $line"
+  fi
+}
+
+cmd_setup() {
+  local choice fresh=true name cdir more=y
+  need mise claude
+  DRAFT='{"default":"","accounts":{}}'
+  echo "Set up claude-accounts: one Claude Code account per set of directories."
+  echo "Press Enter to accept the [default]."
+  echo
+  if [ -f "$CONFIG" ] && jq -e . "$CONFIG" >/dev/null 2>&1; then
+    echo "You already have these accounts ($CONFIG):"
+    show_accounts "$(cat "$CONFIG")"
+    while :; do
+      ask choice "(a)dd accounts, (s)tart over, or (q)uit" a
+      case "$choice" in
+        a|add) DRAFT="$(jq -c . "$CONFIG")"; fresh=false; break ;;
+        s|start*) break ;;
+        q|quit) return 0 ;;
+        *) echo "  Please answer a, s or q." ;;
+      esac
+    done
+    echo
+  fi
+  if [ "$fresh" = true ]; then
+    echo "Your default account is used everywhere no other account claims."
+    setup_account personal true
+    echo
+  fi
+  while :; do
+    [ "$(jq '.accounts | length' <<<"$DRAFT")" -gt 1 ] && more=n
+    confirm "Add another account?" "$more" || break
+    if jq -e '.accounts | has("work")' <<<"$DRAFT" >/dev/null; then name=""; else name=work; fi
+    setup_account "$name" false
+    echo
+  done
+
+  echo "Your accounts:"
+  show_accounts "$DRAFT"
+  echo
+  confirm "Save this and set it up?" y || die "nothing saved"
+  mkdir -p "$CONFIG_DIR"
+  if [ "$fresh" = true ] && [ -f "$CONFIG" ]; then cp "$CONFIG" "$CONFIG.bak" && echo "Saved the old config to $CONFIG.bak"; fi
+  jq . <<<"$DRAFT" > "$CONFIG.tmp" && mv "$CONFIG.tmp" "$CONFIG"
+  echo "✔ saved $(tilde "$CONFIG")"
+  cmd_apply >/dev/null
+  echo "✔ applied: mise env for each directory, account-badge in each account"
+  echo
+
+  while IFS=$'\t' read -r name cdir <&3; do
+    signed_in "$cdir" && { echo "✔ $name: signed in"; continue; }
+    if confirm "Sign in to $name now?" y; then
+      mkdir -p "$cdir"
+      claude_as "$cdir" auth login
+    else
+      echo "  Later: claude-accounts login $name"
+    fi
+  done 3< <(jql -r 'include "lib"; accounts[] | [.name, .configDir] | @tsv' "$CONFIG")
+  echo
+
+  offer_shell_rc
+  echo
+  echo "Done. Open a new shell (so mise and the Zed wrapper load), then check everything with: claude-accounts doctor"
+}
+
 usage() {
   cat <<'EOF'
 Usage: claude-accounts <command>
 
-  init                         create the config with a personal account (~/.claude)
+  setup                        walk through choosing and setting up your accounts
+  init                         create the config with a personal account (~/.claude), no questions
   add <name> [--dir PATH]...   add an account; options: --label, --emoji, --config-dir
   remove <name>                remove an account (its config dir is kept)
   set <name> <field> <value>   field: label, emoji, configDir, dirs+ (add a dir), dirs- (remove one)
@@ -350,6 +560,7 @@ main() {
   local cmd="${1:-help}"
   [ $# -eq 0 ] || shift
   case "$cmd" in
+    setup) cmd_setup "$@" ;;
     init) cmd_init "$@" ;;
     add) cmd_add "$@" ;;
     remove) cmd_remove "$@" ;;
