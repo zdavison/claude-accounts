@@ -1,0 +1,14 @@
+{
+  "name": "account-badge",
+  "version": "0.1.0",
+  "description": "Shows which Claude Code account a session uses, and warns when it is not the one the directory belongs to",
+  "author": { "name": "claude-accounts" },
+  "userConfig": {
+    "label_replies": {
+      "type": "boolean",
+      "title": "Label replies",
+      "description": "Also ask Claude to begin each reply with the account label",
+      "default": false
+    }
+  }
+}

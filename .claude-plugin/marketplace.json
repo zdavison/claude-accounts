@@ -1,0 +1,14 @@
+{
+  "name": "account-switcher",
+  "owner": {
+    "name": "claude-accounts"
+  },
+  "description": "Plugins for claude-accounts: using several Claude Code accounts on one machine",
+  "plugins": [
+    {
+      "name": "account-badge",
+      "source": "./plugin/account-badge",
+      "description": "Shows which Claude Code account a session uses"
+    }
+  ]
+}

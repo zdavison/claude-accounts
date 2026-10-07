@@ -1,0 +1,9 @@
+{
+  "description": "account-badge: badge above the prompt in the terminal, Notice in agent clients",
+  "modules": ["./register.js"],
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/notice" }] }
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# UserPromptSubmit hook: agent clients such as Zed have no band above the prompt, so show the
+# account there as a Notice. Optionally ask Claude to label its replies too (label_replies).
+set -u
+
+here="$(cd "$(dirname "$0")" && pwd -P)"
+cwd="$(jq -r '.cwd // empty' 2>/dev/null)" || cwd=""
+account="$("$here/resolve" --cwd "${cwd:-$PWD}")"
+
+show=false
+case "${CLAUDE_CODE_ENTRYPOINT:-}" in sdk-*) show=true ;; esac
+label=false
+case "${CLAUDE_PLUGIN_OPTION_LABEL_REPLIES:-}" in true|1) label=true ;; esac
+
+printf '%s' "$account" | jq -c --argjson show "$show" --argjson label "$label" '
+  .text as $t
+  | (if $show then {systemMessage: ($t + "\n")} else {} end)
+  + (if $label then {hookSpecificOutput: {hookEventName: "UserPromptSubmit",
+       additionalContext: "This session uses the Claude account shown as \"\($t)\". Begin every reply with that text on its own line."}}
+     else {} end)
+' 2>/dev/null || printf '%s\n' '{"systemMessage":"⚠ account unknown (jq is not installed)\n"}'
