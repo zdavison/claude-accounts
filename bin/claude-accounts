@@ -345,11 +345,17 @@ cmd_doctor() {
 
 NO_ANSWER="no answer (setup asks its questions on the terminal)"
 
-# ask VAR PROMPT [DEFAULT]: one answer, or DEFAULT when it is left empty
+# ask VAR PROMPT [DEFAULT]: one answer, or DEFAULT when it is left empty. On a terminal this uses
+# readline, so answers can be edited and paths completed with Tab.
 ask() {
-  local a
-  if [ -n "${3:-}" ]; then printf '%s [%s]: ' "$2" "$3"; else printf '%s: ' "$2"; fi
-  IFS= read -r a || { echo; die "$NO_ANSWER"; }
+  local a prompt="$2: "
+  [ -z "${3:-}" ] || prompt="$2 [$3]: "
+  if [ -t 0 ]; then
+    IFS= read -e -r -p "$prompt" a || { echo; die "$NO_ANSWER"; }
+  else
+    printf '%s' "$prompt"
+    IFS= read -r a || { echo; die "$NO_ANSWER"; }
+  fi
   printf -v "$1" '%s' "${a:-${3:-}}"
 }
 
@@ -426,7 +432,7 @@ setup_account() {
 
   echo "  Which directories belong to $name? Claude Code uses $name anywhere under them."
   while :; do
-    ask dir "  Directory (empty when done)" ""
+    ask dir "  Directory (Tab completes; empty when done)" ""
     if [ -z "$dir" ]; then
       [ "$ndirs" -gt 0 ] && break
       echo "  ✘ $name needs at least one directory"; continue
