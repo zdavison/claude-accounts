@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Report which Claude Code account this session uses and which one the current directory belongs
+# to, as one line of JSON. The account-badge plugin and the claude-accounts CLI both call this, so
+# every indicator agrees. Always exits 0; failures are reported in "error", never guessed around.
+set -u
+
+here="$(cd "$(dirname "$0")" && pwd -P)"
+cwd="$PWD"
+if [ "${1:-}" = "--cwd" ] && [ -n "${2:-}" ]; then cwd="$2"; fi
+
+fail() {
+  if command -v jq >/dev/null 2>&1; then
+    jq -cn --arg e "$1" '{account: null, label: "?", emoji: "⚠", email: null, loggedIn: false,
+      configDir: null, expected: null, expectedLabel: null, mismatch: false, error: $e,
+      level: "warn", text: "⚠ account unknown (\($e))"}'
+  else
+    printf '%s\n' '{"account":null,"label":"?","emoji":"⚠","email":null,"loggedIn":false,"configDir":null,"expected":null,"expectedLabel":null,"mismatch":false,"error":"jq is not installed","level":"warn","text":"⚠ account unknown (jq is not installed)"}'
+  fi
+  exit 0
+}
+
+command -v jq >/dev/null 2>&1 || fail "jq is not installed"
+
+config="${XDG_CONFIG_HOME:-$HOME/.config}/claude-accounts/accounts.json"
+actual="${CLAUDE_CONFIG_DIR:-}"
+# Claude Code keeps its state file outside the config dir only when CLAUDE_CONFIG_DIR is unset
+if [ -n "$actual" ]; then state="${actual%/}/.claude.json"; else state="$HOME/.claude.json"; fi
+
+email=""
+if [ -f "$state" ]; then
+  email="$(jq -r '.oauthAccount.emailAddress // empty' "$state" 2>/dev/null)" || fail "cannot read $state"
+fi
+
+cfg=null
+if [ -f "$config" ]; then
+  cfg="$(jq -c . "$config" 2>/dev/null)" || fail "invalid config: $config"
+fi
+
+# Match the directory both as given and with symlinks resolved
+pcwd="$(cd "$cwd" 2>/dev/null && pwd -P)" || pcwd="$cwd"
+
+jq -cn -L "$here" --argjson cfg "$cfg" --arg actual "$actual" --arg email "$email" \
+  --arg cwd "$cwd" --arg pcwd "$pcwd" '
+  include "lib";
+  ((if $actual == "" then "~/.claude" else $actual end) | norm) as $dir
+  | ($cwd | norm) as $cwd | ($pcwd | norm) as $pcwd
+  | (if $cfg == null then [] else ($cfg | accounts) end) as $accts
+  | ([ $accts[] | select(.configDir == $dir) ] | first) as $a
+  | (if $cfg == null then null
+     else ([ $accts[] | .name as $n | .dirs[] | . as $d
+             | select(($cwd | within($d)) or ($pcwd | within($d))) | {n: $n, len: ($d | length)} ]
+           | max_by(.len) | .n) // $cfg.default end) as $expected
+  | ([ $accts[] | select(.name == $expected) ] | first) as $e
+  | { account: ($a.name // null),
+      label: ($a.label // ($dir | split("/") | last)),
+      emoji: ($a.emoji // "❔"),
+      email: (if $email == "" then null else $email end),
+      loggedIn: ($email != ""),
+      configDir: $dir,
+      expected: $expected,
+      expectedLabel: ($e.label // null),
+      mismatch: ($cfg != null and ($a.name // null) != $expected),
+      error: null }
+  | .level = (if .mismatch or (.loggedIn | not) then "warn" else "ok" end)
+  | .text = (if .mismatch then "⚠ \(.label), but this dir belongs to \(.expectedLabel)"
+             elif .loggedIn then "\(.emoji) \(.label) · \(.email)"
+             else "\(.emoji) \(.label) · not logged in" end)
+' || fail "resolver failed"

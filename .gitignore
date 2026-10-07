@@ -1,0 +1,3 @@
+# Written by Claude Code when a mod loads with --plugin-dir
+plugin/account-badge/.claude-plugin/types/
+plugin/account-badge/tsconfig.json
