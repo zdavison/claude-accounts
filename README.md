@@ -1,11 +1,11 @@
 # claude-accounts
 
-claude-accounts lets you use more than one Claude Code account on one machine. For example, you can have a personal account and a work account. The directory that you work in selects the account. Claude Code and Zed always show the account that a session uses.
+`claude-accounts` lets you use multiple Claude subscriptions at the same time.\
+This is useful if you want to use a personal and work account at the same time.
 
-- In `~/Work/acme`, the `claude` CLI and the Claude agent in Zed use the work account. In all other directories, they use the personal account.
-- The CLI shows the account badge `🔴 WORK · you@acme.com` above the prompt.
-- Zed shows the account badge as a Notice for each prompt.
-- If a session uses the wrong account for its directory, the badge shows a warning: `⚠ PERSONAL, but this dir belongs to WORK`.
+It binds specific `claude` accounts to specific directories, so you can have all children of your `work` directory use your work account, for example.
+
+# Screenshots
 
 The CLI shows the badge above the prompt:
 
@@ -30,23 +30,6 @@ Run the installer:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/zdavison/claude-accounts/main/install.sh | sh
-```
-
-The installer does these steps:
-
-1. It makes sure that bash, jq, mise, and Claude Code are installed. If a tool is missing, the installer tells you how to install it and stops.
-2. It installs the npm package `@zdavison/claude-accounts` with mise. If mise cannot install the package, the installer uses npm.
-3. It starts `claude-accounts setup`. For more information, see [Set up](#set-up).
-
-You can change what the installer does with these variables:
-
-- `CLAUDE_ACCOUNTS_VERSION=1.2.3` installs version 1.2.3. The default is the latest version.
-- `CLAUDE_ACCOUNTS_NO_SETUP=1` installs the package only. Then run `claude-accounts setup` yourself.
-
-For example:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/zdavison/claude-accounts/main/install.sh | CLAUDE_ACCOUNTS_NO_SETUP=1 sh
 ```
 
 ### Install without the installer

@@ -4,6 +4,8 @@
 #
 # CLAUDE_ACCOUNTS_VERSION=1.2.3  install that version (default: latest)
 # CLAUDE_ACCOUNTS_NO_SETUP=1     install only; run `claude-accounts setup` yourself
+#
+# setup runs only on the first install. A later run upgrades and keeps your accounts.
 set -eu
 
 PKG="@zdavison/claude-accounts"
@@ -44,6 +46,13 @@ else
 fi
 [ -n "$bin" ] && [ -x "$bin" ] || die "installed $PKG, but cannot find the claude-accounts command"
 say "Installed claude-accounts."
+
+CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/claude-accounts/accounts.json"
+if [ -f "$CONFIG" ]; then
+  say "Your accounts are already set up ($CONFIG)."
+  say "To change them, run: claude-accounts setup. To check them, run: claude-accounts doctor"
+  exit 0
+fi
 
 if [ -n "${CLAUDE_ACCOUNTS_NO_SETUP:-}" ] || ! (exec <"$TTY") 2>/dev/null; then
   say "Next, run: claude-accounts setup"

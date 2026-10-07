@@ -91,3 +91,13 @@ install() { PATH="$T" /bin/sh "$ROOT/install.sh" </dev/null; }
   [ "$status" -ne 0 ]
   [[ "$output" == *"could not install"* ]]
 }
+
+@test "install.sh skips setup on a later run, when a config already exists" {
+  mkdir -p "$XDG_CONFIG_HOME/claude-accounts"
+  echo '{}' > "$XDG_CONFIG_HOME/claude-accounts/accounts.json"
+  run install
+  [ "$status" -eq 0 ]
+  grep -qxF "mise use -g npm:@zdavison/claude-accounts@latest" "$STUB_LOG"
+  ! grep -q '^claude-accounts setup' "$STUB_LOG"
+  [[ "$output" == *"claude-accounts doctor"* ]]
+}
