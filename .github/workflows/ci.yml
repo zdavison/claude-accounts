@@ -1,0 +1,30 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  shell:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            test_bash: bash
+          - os: macos-latest
+            test_bash: /bin/bash   # bash 3.2
+    runs-on: ${{ matrix.os }}
+    env:
+      TEST_BASH: ${{ matrix.test_bash }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: shellcheck bin/claude-accounts plugin/account-badge/scripts/resolve plugin/account-badge/scripts/notice test/stubs/*
+      - run: bats test
+
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm install -g @anthropic-ai/claude-code
+      - run: claude plugin validate --strict plugin/account-badge
+      - run: claude plugin validate .
+      - run: claude plugin test
+        working-directory: plugin/account-badge
