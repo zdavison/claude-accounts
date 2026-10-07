@@ -5,6 +5,13 @@ This is useful if you want to use a personal and work account at the same time.
 
 It binds specific `claude` accounts to specific directories, so you can have all children of your `work` directory use your work account, for example.
 
+It currently supports switching and showing current account in:
+
+- `claude` (CLI)
+- Zed
+
+Other tools may be supported already, but are yet untested. YMMV.
+
 # Screenshots
 
 The CLI shows the badge above the prompt:
