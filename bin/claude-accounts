@@ -212,6 +212,121 @@ cmd_set() {
   echo "Updated $name. Run 'claude-accounts apply' to put it into effect."
 }
 
+# version_ge A B: true when dotted version A >= B
+version_ge() {
+  awk -v a="$1" -v b="$2" 'BEGIN {
+    split(a, x, "."); split(b, y, ".")
+    for (i = 1; i <= 3; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 }
+    exit 0 }'
+}
+
+cmd_which() {
+  local json=false dir="" out cdir
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json) json=true; shift ;;
+      -*) die "unknown option: $1" ;;
+      *) dir="$1"; shift ;;
+    esac
+  done
+  if [ -n "$dir" ]; then
+    [ -d "$dir" ] || die "$dir is not a directory"
+    need mise
+    # What a session started in DIR would get: mise's environment there, not this shell's
+    cdir="$(mise env -C "$dir" --json | jq -r '.CLAUDE_CONFIG_DIR // empty')"
+    if [ -n "$cdir" ]; then
+      out="$(CLAUDE_CONFIG_DIR="$cdir" "$BASH" "$RESOLVE" --cwd "$dir")"
+    else
+      out="$(env -u CLAUDE_CONFIG_DIR "$BASH" "$RESOLVE" --cwd "$dir")"
+    fi
+  else
+    out="$("$BASH" "$RESOLVE")"
+  fi
+  if [ "$json" = true ]; then printf '%s\n' "$out"; return 0; fi
+  jq -r '.text,
+    "  in use:   \(.account // "not in config") (\(.configDir))",
+    "  expected: \(.expected // "-")"' <<<"$out"
+}
+
+cmd_login() {
+  local name="${1:-}" cdir
+  [ -n "$name" ] || die "usage: claude-accounts login <name>"
+  need claude
+  load_config
+  account_exists "$name" || die "no account '$name'"
+  cdir="$(jql -r --arg n "$name" 'include "lib"; accounts[] | select(.name == $n) | .configDir' "$CONFIG")"
+  mkdir -p "$cdir"
+  claude_as "$cdir" auth login
+}
+
+cmd_shell_init() {
+  local shell="${1:-}" editor path
+  case "$shell" in fish|bash|zsh) ;; *) die "usage: claude-accounts shell-init fish|bash|zsh" ;; esac
+  if [ "$shell" = fish ]; then echo 'set -gx CLAUDE_ACCOUNTS_SHELL_INIT 1'; else echo 'export CLAUDE_ACCOUNTS_SHELL_INIT=1'; fi
+  # One Zed process serves every window and keeps the environment it started with, so start it
+  # without an account's CLAUDE_CONFIG_DIR; each project then gets its own from mise.
+  for editor in zed zeditor; do
+    path="$(command -v "$editor" 2>/dev/null)" || continue
+    case "$path" in *"'"*) continue ;; esac
+    if [ "$shell" = fish ]; then
+      printf "function %s\n    env -u CLAUDE_CONFIG_DIR '%s' \$argv\nend\n" "$editor" "$path"
+    else
+      printf "%s() { env -u CLAUDE_CONFIG_DIR '%s' \"\$@\"; }\n" "$editor" "$path"
+    fi
+  done
+}
+
+DOCTOR_FAILED=0
+ok() { printf '✔ %s\n' "$1"; }
+bad() { printf '✘ %s\n    fix: %s\n' "$1" "$2"; DOCTOR_FAILED=1; }
+
+cmd_doctor() {
+  local t v problems name dir cdir got state r
+  for t in mise claude; do
+    if command -v "$t" >/dev/null 2>&1; then ok "$t installed"; else bad "$t not installed" "install $t"; fi
+  done
+  if command -v claude >/dev/null 2>&1; then
+    v="$(claude --version 2>/dev/null | awk '{print $1}')"
+    if version_ge "$v" "$MIN_CLAUDE"; then ok "Claude Code $v"
+    else bad "Claude Code $v is older than $MIN_CLAUDE" "update Claude Code, e.g. mise upgrade claude"; fi
+  fi
+  if [ -n "${MISE_SHELL:-}" ]; then ok "mise is activated in this shell"
+  else bad "mise is not activated in this shell" "activate mise in your shell rc (https://mise.jdx.dev/getting-started.html)"; fi
+  if command -v zed >/dev/null 2>&1 || command -v zeditor >/dev/null 2>&1; then
+    if [ -n "${CLAUDE_ACCOUNTS_SHELL_INIT:-}" ]; then ok "Zed wrapper active"
+    else bad "Zed wrapper not active" "fish: claude-accounts shell-init fish | source; bash/zsh: eval \"\$(claude-accounts shell-init bash)\""; fi
+  fi
+  if [ ! -f "$CONFIG" ]; then bad "no config at $CONFIG" "claude-accounts init"; return 1; fi
+  load_config
+  problems="$(jql -r "$CHECK" "$CONFIG")"
+  [ -z "$problems" ] || bad "config: $problems" "claude-accounts set / remove"
+
+  if command -v mise >/dev/null 2>&1; then
+    while IFS=$'\t' read -r name dir cdir <&3; do
+      got="$(mise env -C "$dir" --json 2>/dev/null | jq -r '.CLAUDE_CONFIG_DIR // empty' 2>/dev/null || true)"
+      if [ "$got" = "$cdir" ]; then ok "$name: $dir uses $cdir"
+      elif [ -n "$got" ]; then bad "$name: $dir uses $got, not $cdir" "claude-accounts apply"
+      else bad "$name: $dir uses the default (~/.claude), not $cdir" "claude-accounts apply"; fi
+    done 3< <(jql -r 'include "lib"; accounts[] | .name as $n | .configDir as $c | .dirs[] | [$n, ., $c] | @tsv' "$CONFIG")
+  fi
+
+  while IFS=$'\t' read -r name cdir <&3; do
+    if [ "$cdir" = "$HOME/.claude" ]; then state="$HOME/.claude.json"; else state="$cdir/.claude.json"; fi
+    if jq -e '.oauthAccount.emailAddress' "$state" >/dev/null 2>&1; then ok "$name: logged in"
+    else bad "$name: not logged in" "claude-accounts login $name"; fi
+    if command -v claude >/dev/null 2>&1 && plugin_installed "$cdir"; then ok "$name: account-badge installed"
+    else bad "$name: account-badge not installed" "claude-accounts apply"; fi
+  done 3< <(jql -r 'include "lib"; accounts[] | [.name, .configDir] | @tsv' "$CONFIG")
+
+  r="$("$BASH" "$RESOLVE")"
+  if jq -e '.mismatch or .error != null' >/dev/null <<<"$r"; then
+    bad "$(jq -r .text <<<"$r") (current directory)" "open a new shell here so mise sets CLAUDE_CONFIG_DIR, then re-run doctor"
+  else
+    ok "current directory: $(jq -r .text <<<"$r")"
+  fi
+  return "$DOCTOR_FAILED"
+}
+
 usage() {
   cat <<'EOF'
 Usage: claude-accounts <command>
@@ -238,6 +353,10 @@ main() {
     remove) cmd_remove "$@" ;;
     set) cmd_set "$@" ;;
     apply) cmd_apply "$@" ;;
+    which) cmd_which "$@" ;;
+    login) cmd_login "$@" ;;
+    shell-init) cmd_shell_init "$@" ;;
+    doctor) cmd_doctor "$@" ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 1 ;;
   esac
