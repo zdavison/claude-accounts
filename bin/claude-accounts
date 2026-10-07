@@ -35,15 +35,8 @@ load_config() {
   jq -e . "$CONFIG" >/dev/null 2>&1 || die "invalid JSON in $CONFIG"
 }
 
-# Problems that make a config unusable, one per line; prints nothing when it is fine
-CHECK='include "lib";
-  . as $c | accounts as $a
-  | [ $a[] | .name as $n | .dirs[] | {n: $n, d: .} ] as $all
-  | ( [ if any($a[]; .name == $c.default) then empty else "default account \"\($c.default)\" is not defined" end ]
-    + [ $a[] | select(.name == $c.default and (.dirs | length) > 0) | "the default account (\(.name)) cannot have dirs" ]
-    + [ $all[] as $x | $all[] | select(.n < $x.n and (.d | overlaps($x.d))) | "\(.d) (\(.n)) overlaps \($x.d) (\($x.n))" ]
-    + [ $a[] as $x | $a[] | select(.name < $x.name and .configDir == $x.configDir) | "\(.name) and \($x.name) share config dir \(.configDir)" ]
-    ) | .[]'
+# Problems that make a config unusable (see lib.jq), one per line; nothing when it is fine
+CHECK='include "lib"; problems'
 
 # update_config JQ-ARGS... FILTER: rewrite the config, refusing a result that has problems
 update_config() {
@@ -62,11 +55,18 @@ valid_name() {
   esac
 }
 
-# Store paths absolute, with $HOME written as ~ so the config reads the same on every machine
+# Store paths absolute and real (., .. and symlinks resolved, so they match the physical
+# directories Claude Code reports), with $HOME written as ~ so the config reads the same on every
+# machine. Call it as an assignment, so a failure stops the script.
 # shellcheck disable=SC2088  # the literal ~ is what gets stored
 store_path() {
   local p="$1"
-  case "$p" in "~"|"~/"*|/*) ;; *) p="$PWD/$p" ;; esac
+  case "$p" in "~") p="$HOME" ;; "~/"*) p="$HOME/${p#"~/"}" ;; /*) ;; *) p="$PWD/$p" ;; esac
+  if [ -d "$p" ]; then
+    p="$(cd "$p" && pwd -P)"
+  else
+    case "/$p/" in */./*|*/../*) die "$1 does not exist, so it can't contain . or .." ;; esac
+  fi
   case "$p" in "$HOME") p="~" ;; "$HOME"/*) p="~/${p#"$HOME"/}" ;; esac
   [ "$p" = "/" ] || p="${p%/}"
   printf '%s' "$p"
@@ -153,7 +153,7 @@ cmd_init() {
 }
 
 cmd_add() {
-  local name="${1:-}" dirs='[]' label='' emoji='' cdir=''
+  local name="${1:-}" dirs='[]' label='' emoji='' cdir='' p
   [ -n "$name" ] || die "usage: claude-accounts add <name> [--dir PATH]... [--label L] [--emoji E] [--config-dir D]"
   shift
   valid_name "$name"
@@ -162,7 +162,7 @@ cmd_add() {
       --dir|--label|--emoji|--config-dir)
         [ $# -ge 2 ] || die "$1 needs a value"
         case "$1" in
-          --dir) dirs="$(jq -c --arg d "$(store_path "$2")" '. + [$d]' <<<"$dirs")" ;;
+          --dir) p="$(store_path "$2")"; dirs="$(jq -c --arg d "$p" '. + [$d]' <<<"$dirs")" ;;
           --label) label="$2" ;;
           --emoji) emoji="$2" ;;
           --config-dir) cdir="$(store_path "$2")" ;;
@@ -193,19 +193,20 @@ cmd_remove() {
 }
 
 cmd_set() {
-  local name="${1:-}" field="${2:-}" value="${3:-}"
+  local name="${1:-}" field="${2:-}" value="${3:-}" path=""
   [ -n "$name" ] && [ -n "$field" ] && [ $# -ge 3 ] || die "usage: claude-accounts set <name> label|emoji|configDir|dirs+|dirs- <value>"
   load_config
   account_exists "$name" || die "no account '$name'"
+  case "$field" in configDir|dirs+|dirs-) path="$(store_path "$value")" ;; esac
   case "$field" in
     label|emoji)
       update_config --arg n "$name" --arg f "$field" --arg v "$value" '.accounts[$n][$f] = $v' ;;
     configDir)
-      update_config --arg n "$name" --arg v "$(store_path "$value")" '.accounts[$n].configDir = $v' ;;
+      update_config --arg n "$name" --arg v "$path" '.accounts[$n].configDir = $v' ;;
     dirs+)
-      update_config --arg n "$name" --arg v "$(store_path "$value")" '.accounts[$n].dirs = ((.accounts[$n].dirs // []) + [$v] | unique)' ;;
+      update_config --arg n "$name" --arg v "$path" '.accounts[$n].dirs = ((.accounts[$n].dirs // []) + [$v] | unique)' ;;
     dirs-)
-      update_config --arg n "$name" --arg v "$(store_path "$value")" 'include "lib";
+      update_config --arg n "$name" --arg v "$path" 'include "lib";
         .accounts[$n].dirs = [ (.accounts[$n].dirs // [])[] | select(norm != ($v | norm)) ]' ;;
     *) die "unknown field '$field' (use label, emoji, configDir, dirs+ or dirs-)" ;;
   esac
@@ -233,7 +234,8 @@ cmd_which() {
     [ -d "$dir" ] || die "$dir is not a directory"
     need mise
     # What a session started in DIR would get: mise's environment there, not this shell's
-    cdir="$(mise env -C "$dir" --json | jq -r '.CLAUDE_CONFIG_DIR // empty')"
+    # If mise can't load the dir (e.g. an untrusted config), a session there gets no CLAUDE_CONFIG_DIR
+    cdir="$(mise env -C "$dir" --json 2>/dev/null | jq -r '.CLAUDE_CONFIG_DIR // empty')" || cdir=""
     if [ -n "$cdir" ]; then
       out="$(CLAUDE_CONFIG_DIR="$cdir" "$BASH" "$RESOLVE" --cwd "$dir")"
     else

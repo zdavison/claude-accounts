@@ -103,3 +103,35 @@ setup() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"default account (personal) cannot have dirs"* ]]
 }
+
+@test "add resolves . and .. so the stored dir matches and overlaps are caught" {
+  cli init
+  mkdir -p "$HOME/Work/acme" "$HOME/Work/acme-other"
+  cd "$HOME/Work/acme"
+  run cli add work --dir .
+  [ "$status" -eq 0 ]
+  [ "$(config_json | jq -c .accounts.work.dirs)" = '["~/Work/acme"]' ]
+  run cli add w2 --dir "$HOME/Work/acme-other/.."
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"overlaps"* ]]
+}
+
+@test "a dir that does not exist cannot use . or .." {
+  cli init
+  run cli add work --dir "$HOME/nope/../x"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not exist"* ]]
+  [ "$(config_json | jq '.accounts | has("work")')" = false ]
+}
+
+@test "a symlinked dir is stored as its real path, so physical cwds match" {
+  cli init
+  mkdir -p "$HOME/real/proj" "$HOME/Work"
+  ln -s "$HOME/real/proj" "$HOME/Work/link"
+  run cli add work --dir "$HOME/Work/link"
+  [ "$(config_json | jq -c .accounts.work.dirs)" = '["~/real/proj"]' ]
+  CLAUDE_CONFIG_DIR="$HOME/.claude-work" run resolve --cwd "$HOME/real/proj"
+  [ "$(field expected)" = work ]
+  CLAUDE_CONFIG_DIR="$HOME/.claude-work" run resolve --cwd "$HOME/Work/link"
+  [ "$(field expected)" = work ]
+}

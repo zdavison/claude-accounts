@@ -6,7 +6,8 @@ case "$1" in
     printf '[env]\n%s = "%s"\n' "${4%%=*}" "${4#*=}" > "$3" ;;
   unset) # unset --file FILE KEY
     rm -f "$3" ;;
-  env)   # env -C DIR --json
+  env)   # env -C DIR --json; a .untrusted marker makes it fail the way an untrusted config does
+    if [ -e "$3/.untrusted" ]; then echo "mise ERROR config not trusted" >&2; exit 1; fi
     v="$(sed -n 's/^CLAUDE_CONFIG_DIR = "\(.*\)"$/\1/p' "$3/mise.local.toml" 2>/dev/null)"
     jq -n --arg v "$v" 'if $v == "" then {} else {CLAUDE_CONFIG_DIR: $v} end' ;;
 esac

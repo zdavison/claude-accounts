@@ -34,6 +34,9 @@ fi
 cfg=null
 if [ -f "$config" ]; then
   cfg="$(jq -c . "$config" 2>/dev/null)" || fail "invalid config: $config"
+  # A hand-edited config can break the rules the CLI enforces; report that, never pick arbitrarily
+  problem="$(jq -r -L "$here" 'include "lib"; [ambiguities] | first // empty' <<<"$cfg")" || fail "invalid config: $config"
+  [ -z "$problem" ] || fail "config: $problem"
 fi
 
 # Match the directory both as given and with symlinks resolved

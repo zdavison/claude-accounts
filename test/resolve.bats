@@ -136,3 +136,16 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$output" = '{"account":null,"label":"?","emoji":"⚠","email":null,"loggedIn":false,"configDir":null,"expected":null,"expectedLabel":null,"mismatch":false,"error":"jq is not installed","level":"warn","text":"⚠ account unknown (jq is not installed)"}' ]
 }
+
+@test "a config with an undefined default is an error, not 'belongs to null'" {
+  write_config '{"default":"nobody","accounts":{"personal":{"configDir":"~/.claude"}}}'
+  run resolve --cwd "$HOME/elsewhere"
+  [ "$(field error)" = 'config: default account "nobody" is not defined' ]
+  [ "$(field level)" = warn ]
+}
+
+@test "two accounts sharing a config dir is an error, not an arbitrary pick" {
+  write_config '{"default":"personal","accounts":{"personal":{"configDir":"~/.claude"},"twin":{"configDir":"~/.claude"}}}'
+  run resolve --cwd "$HOME/elsewhere"
+  [[ "$(field error)" == "config: personal and twin share config dir"* ]]
+}

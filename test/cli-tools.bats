@@ -76,3 +76,12 @@ setup() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"✘ work: $HOME/Work/acme uses the default (~/.claude), not $HOME/.claude-work"* ]]
 }
+
+@test "which DIR reports the default account when mise fails there, instead of dying" {
+  cli apply
+  touch "$HOME/Work/acme/.untrusted"
+  run cli which "$HOME/Work/acme" --json
+  [ "$status" -eq 0 ]
+  [ "$(field account)" = personal ]
+  [ "$(field mismatch)" = true ]
+}
