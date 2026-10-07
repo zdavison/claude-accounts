@@ -72,6 +72,78 @@ store_path() {
   printf '%s' "$p"
 }
 
+# claude_as CONFIGDIR ARGS...: run claude as an account; ~/.claude means CLAUDE_CONFIG_DIR unset
+claude_as() {
+  local cdir="$1"
+  shift
+  if [ "$cdir" = "$HOME/.claude" ]; then
+    env -u CLAUDE_CONFIG_DIR claude "$@"
+  else
+    env CLAUDE_CONFIG_DIR="$cdir" claude "$@"
+  fi
+}
+
+plugin_installed() {
+  claude_as "$1" plugin list --json 2>/dev/null \
+    | jq -e --arg id "$PLUGIN_ID" 'any(.[]; .id == $id and .enabled)' >/dev/null 2>&1
+}
+
+# Undo CLAUDE_CONFIG_DIR in dirs an earlier apply set up that the config no longer lists,
+# then record the dirs the config lists now
+cleanup_stale() {
+  local dir
+  if [ -f "$STATE" ]; then
+    while IFS= read -r dir <&3; do
+      [ -f "$dir/mise.local.toml" ] || continue
+      mise unset --file "$dir/mise.local.toml" CLAUDE_CONFIG_DIR >/dev/null || die "mise unset failed in $dir"
+      echo "✔ $dir no longer sets CLAUDE_CONFIG_DIR"
+    done 3< <(jql -r --slurpfile cfg "$CONFIG" 'include "lib";
+      [$cfg[0] | accounts[] | .dirs[]] as $now
+      | (.managedDirs // [])[] | select(. as $d | any($now[]; . == $d) | not)' "$STATE")
+  fi
+  mkdir -p "$CONFIG_DIR"
+  jql 'include "lib"; {managedDirs: [accounts[] | .dirs[]]}' "$CONFIG" > "$STATE.tmp"
+  mv "$STATE.tmp" "$STATE"
+}
+
+cmd_apply() {
+  local source="${CLAUDE_ACCOUNTS_MARKETPLACE:-$ROOT}" problems name cdir dir
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --marketplace) [ $# -ge 2 ] || die "--marketplace needs a value"; source="$2"; shift 2 ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+  need mise claude
+  load_config
+  problems="$(jql -r "$CHECK" "$CONFIG")"
+  [ -z "$problems" ] || die "$problems"
+
+  while IFS=$'\t' read -r name cdir <&3; do
+    mkdir -p "$cdir" || die "$name: cannot create $cdir"
+  done 3< <(jql -r 'include "lib"; accounts[] | [.name, .configDir] | @tsv' "$CONFIG")
+
+  while IFS=$'\t' read -r name dir cdir <&3; do
+    [ -d "$dir" ] || die "$name: $dir does not exist; create it, or run: claude-accounts set $name dirs- '$dir'"
+    mise set --file "$dir/mise.local.toml" "CLAUDE_CONFIG_DIR=$cdir" >/dev/null || die "$name: mise set failed in $dir"
+    mise trust --quiet "$dir/mise.local.toml" || die "$name: mise trust failed for $dir/mise.local.toml"
+    echo "✔ $name: $dir uses $cdir"
+  done 3< <(jql -r 'include "lib"; accounts[] | .name as $n | .configDir as $c | .dirs[] | [$n, ., $c] | @tsv' "$CONFIG")
+
+  cleanup_stale
+
+  while IFS=$'\t' read -r name cdir <&3; do
+    if plugin_installed "$cdir"; then echo "✔ $name: account-badge installed"; continue; fi
+    # Adding a marketplace that is already known fails harmlessly; the install below is what matters
+    claude_as "$cdir" plugin marketplace add "$source" >/dev/null 2>&1 || true
+    claude_as "$cdir" plugin install "$PLUGIN_ID" >/dev/null \
+      || die "$name: could not install $PLUGIN_ID from $source (try: claude-accounts apply --marketplace <github owner/repo>)"
+    echo "✔ $name: installed account-badge"
+  done 3< <(jql -r 'include "lib"; accounts[] | [.name, .configDir] | @tsv' "$CONFIG")
+
+  echo "Done. Sign in to any account that isn't yet: claude-accounts login <name>"
+}
+
 cmd_init() {
   if [ -f "$CONFIG" ]; then echo "Config already exists: $CONFIG"; return 0; fi
   mkdir -p "$CONFIG_DIR"
@@ -165,6 +237,7 @@ main() {
     add) cmd_add "$@" ;;
     remove) cmd_remove "$@" ;;
     set) cmd_set "$@" ;;
+    apply) cmd_apply "$@" ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 1 ;;
   esac
