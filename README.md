@@ -8,6 +8,16 @@ chosen by directory and always visible.
 - If a session is on the wrong account for its directory, both say so:
   `⚠ PERSONAL, but this dir belongs to WORK`.
 
+In Claude Code, the badge sits above the prompt:
+
+![Claude Code in a personal directory: 🟢 PERSONAL · you@example.com](assets/cli-personal.png)
+![Claude Code in a work directory: 🔴 WORK · you@acme.com](assets/cli-work.png)
+
+In Zed, every prompt gets a Notice naming the account:
+
+![Zed in a work project: Notice: 🔴 WORK · you@acme.com](assets/zed-work.png)
+![Zed in a personal project: Notice: 🟢 PERSONAL · you@example.com](assets/zed-personal.png)
+
 ## Requirements
 
 macOS or Linux, [mise](https://mise.jdx.dev) activated in your shell, jq, and Claude Code 2.1.289 or later.
@@ -34,7 +44,13 @@ claude-accounts setup
 It asks which accounts you want and, for each one, its label, emoji, Claude config dir and the
 directories it owns. Then it applies the config, offers to sign in each account, and offers to
 add the Zed wrapper to your shell rc. Run it again to add accounts or start over.
-Afterwards, open a new shell and check everything with `claude-accounts doctor`.
+
+![claude-accounts setup walking through a personal and a work account](assets/setup.png)
+
+Afterwards, open a new shell and check everything with `claude-accounts doctor`. In a work
+directory it reports the work account; anywhere else, the personal one:
+
+![claude-accounts doctor in a personal and a work directory](assets/doctor.png)
 
 To script it instead (e.g. in a dotfiles install script):
 ```sh
