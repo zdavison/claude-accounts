@@ -432,7 +432,8 @@ setup_account() {
 
   echo "  Which directories belong to $name? Claude Code uses $name anywhere under them."
   while :; do
-    ask dir "  Directory (Tab completes; empty when done)" ""
+    if [ "$ndirs" -eq 0 ]; then ask dir "  Directory (Tab completes)" ""
+    else ask dir "  Another directory? (Enter to finish)" ""; fi
     if [ -z "$dir" ]; then
       [ "$ndirs" -gt 0 ] && break
       echo "  ✘ $name needs at least one directory"; continue
@@ -444,10 +445,14 @@ setup_account() {
     fi
     fails store_path "$dir" && continue
     path="$(store_path "$dir")"
+    if jq -e --arg n "$name" --arg d "$path" '.accounts[$n].dirs // [] | index($d)' <<<"$DRAFT" >/dev/null; then
+      echo "  ✘ $path is already added"; continue
+    fi
     next="$(draft_with --arg n "$name" --arg d "$path" '.accounts[$n].dirs = ((.accounts[$n].dirs // []) + [$d])' 2>&1)" \
       || { printf '%s\n' "$next"; continue; }
     DRAFT="$next"
     ndirs=$((ndirs + 1))
+    echo "  ✔ added $path"
   done
 }
 

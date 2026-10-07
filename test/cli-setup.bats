@@ -116,3 +116,16 @@ FRESH=("" "" "" "" y work "" "" "" "~/Work/acme" "" n y n n)
   [[ "$output" == *"no answer"* ]]
   [ ! -e "$XDG_CONFIG_HOME/claude-accounts/accounts.json" ]
 }
+
+@test "setup confirms each directory and says how to finish" {
+  run answer "" "" "" "" y work "" "" "" "~/Work/acme" "" n y n n n
+  [[ "$output" == *"✔ added ~/Work/acme"* ]]
+  [[ "$output" == *"Another directory"* ]]
+}
+
+@test "setup refuses the same directory twice for an account" {
+  run answer "" "" "" "" y work "" "" "" "~/Work/acme" "~/Work/acme/" "" n y n n n
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already added"* ]]
+  [ "$(config_json | jq -c .accounts.work.dirs)" = '["~/Work/acme"]' ]
+}
