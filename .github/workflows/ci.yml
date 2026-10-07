@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v2
-      - run: shellcheck bin/claude-accounts plugin/account-badge/scripts/resolve plugin/account-badge/scripts/notice scripts/set-version test/stubs/*
+      - run: shellcheck bin/claude-accounts plugin/account-badge/scripts/resolve plugin/account-badge/scripts/notice scripts/set-version install.sh test/stubs/*
       - run: bats test
 
   plugin:

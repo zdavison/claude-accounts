@@ -80,3 +80,17 @@ setup() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"overlaps"* ]]
 }
+
+@test "an installed package (not a git checkout) installs the plugin from GitHub" {
+  pkg="$BATS_TEST_TMPDIR/pkg"
+  mkdir -p "$pkg"
+  cp -R "$ROOT/bin" "$ROOT/plugin" "$ROOT/.claude-plugin" "$pkg/"
+  run "$TEST_BASH" "$pkg/bin/claude-accounts" apply
+  [ "$status" -eq 0 ]
+  grep -qxF "claude[unset] plugin marketplace add zdavison/claude-accounts" "$STUB_LOG"
+}
+
+@test "a git checkout installs the plugin from itself" {
+  cli apply
+  grep -qxF "claude[unset] plugin marketplace add $ROOT" "$STUB_LOG"
+}

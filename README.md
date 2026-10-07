@@ -26,27 +26,44 @@ Zed shows the badge as a Notice:
 
 ## Install
 
-1. Install the package:
+Run the installer:
 
-   ```sh
-   mise use -g npm:@zdavison/claude-accounts
-   ```
+```sh
+curl -fsSL https://raw.githubusercontent.com/zdavison/claude-accounts/main/install.sh | sh
+```
 
-   You can also use npm: `npm install -g @zdavison/claude-accounts`.
+The installer does these steps:
 
-2. Add this line to your shell rc file:
+1. It makes sure that bash, jq, mise, and Claude Code are installed. If a tool is missing, the installer tells you how to install it and stops.
+2. It installs the npm package `@zdavison/claude-accounts` with mise. If mise cannot install the package, the installer uses npm.
+3. It starts `claude-accounts setup`. For more information, see [Set up](#set-up).
 
-   ```sh
-   export CLAUDE_ACCOUNTS_MARKETPLACE=zdavison/claude-accounts
-   ```
+You can change what the installer does with these variables:
 
-   With this variable, `apply` installs the plugin from GitHub. Thus `claude plugin update` can update the plugin. Without this variable, `apply` installs the plugin from the package directory.
+- `CLAUDE_ACCOUNTS_VERSION=1.2.3` installs version 1.2.3. The default is the latest version.
+- `CLAUDE_ACCOUNTS_NO_SETUP=1` installs the package only. Then run `claude-accounts setup` yourself.
 
-You can also clone the repository and add its `bin/` directory to your `PATH`. Then the clone is the source of the plugin.
+For example:
 
-To upgrade:
+```sh
+curl -fsSL https://raw.githubusercontent.com/zdavison/claude-accounts/main/install.sh | CLAUDE_ACCOUNTS_NO_SETUP=1 sh
+```
 
-1. Upgrade the package.
+### Install without the installer
+
+Install the package with mise:
+
+```sh
+mise use -g npm:@zdavison/claude-accounts
+```
+
+You can also use npm: `npm install -g @zdavison/claude-accounts`. Then run `claude-accounts setup`.
+
+The installed package installs the plugin from the GitHub repository. You can also clone the repository and add its `bin/` directory to your `PATH`. Then the clone is the source of the plugin. To use a different source, set `CLAUDE_ACCOUNTS_MARKETPLACE` or use `apply --marketplace`.
+
+### Upgrade
+
+1. Run the installer again, or upgrade the package with mise or npm.
 2. For each account, run `claude plugin update account-badge@account-switcher` with the `CLAUDE_CONFIG_DIR` of that account.
 
 ## Set up

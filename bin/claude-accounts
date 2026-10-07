@@ -18,6 +18,10 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-accounts"
 CONFIG="$CONFIG_DIR/accounts.json"
 STATE="$CONFIG_DIR/state.json"
 PLUGIN_ID="account-badge@account-switcher"
+# Where apply installs the plugin from: a git checkout is its own marketplace. An installed package
+# lives in a versioned directory that an upgrade removes, so it uses the GitHub repository instead.
+GITHUB_REPO="zdavison/claude-accounts"
+if [ -e "$ROOT/.git" ]; then DEFAULT_MARKETPLACE="$ROOT"; else DEFAULT_MARKETPLACE="$GITHUB_REPO"; fi
 MIN_CLAUDE="2.1.289"
 
 die() { printf 'claude-accounts: %s\n' "$*" >&2; exit 1; }
@@ -120,7 +124,7 @@ cleanup_stale() {
 }
 
 cmd_apply() {
-  local source="${CLAUDE_ACCOUNTS_MARKETPLACE:-$ROOT}" problems name cdir dir
+  local source="${CLAUDE_ACCOUNTS_MARKETPLACE:-$DEFAULT_MARKETPLACE}" problems name cdir dir
   while [ $# -gt 0 ]; do
     case "$1" in
       --marketplace) [ $# -ge 2 ] || die "--marketplace needs a value"; source="$2"; shift 2 ;;
