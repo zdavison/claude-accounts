@@ -15,8 +15,8 @@ macOS or Linux, [mise](https://mise.jdx.dev) activated in your shell, jq, and Cl
 ## Install
 
 ```sh
-mise use -g github:OWNER/claude-accounts      # OWNER: the GitHub account hosting this repo
-export CLAUDE_ACCOUNTS_MARKETPLACE=OWNER/claude-accounts   # add to your shell rc
+mise use -g github:zdavison/claude-accounts
+export CLAUDE_ACCOUNTS_MARKETPLACE=zdavison/claude-accounts   # add to your shell rc
 ```
 Or clone the repo and put its `bin/` on your `PATH` (the checkout is then the plugin source).
 
