@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# claude-accounts: use several Claude Code accounts on one machine, chosen by directory.
+# Requires bash 3.2+, jq and mise. See README.md.
+# shellcheck disable=SC2016  # jq programs are single-quoted on purpose
+set -euo pipefail
+
+# Find our own checkout through symlinks (macOS has no readlink -f)
+src="$0"
+while [ -L "$src" ]; do
+  dir="$(cd "$(dirname "$src")" && pwd -P)"
+  src="$(readlink "$src")"
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+ROOT="$(cd "$(dirname "$src")/.." && pwd -P)"
+LIB="$ROOT/plugin/account-badge/scripts"
+RESOLVE="$LIB/resolve"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-accounts"
+CONFIG="$CONFIG_DIR/accounts.json"
+STATE="$CONFIG_DIR/state.json"
+PLUGIN_ID="account-badge@account-switcher"
+MIN_CLAUDE="2.1.289"
+
+die() { printf 'claude-accounts: %s\n' "$*" >&2; exit 1; }
+
+need() {
+  local t
+  for t in "$@"; do command -v "$t" >/dev/null 2>&1 || die "$t is not installed"; done
+}
+
+# jq with lib.jq available through: include "lib";
+jql() { jq -L "$LIB" "$@"; }
+
+load_config() {
+  [ -f "$CONFIG" ] || die "no config at $CONFIG; run: claude-accounts init"
+  jq -e . "$CONFIG" >/dev/null 2>&1 || die "invalid JSON in $CONFIG"
+}
+
+# Problems that make a config unusable, one per line; prints nothing when it is fine
+CHECK='include "lib";
+  . as $c | accounts as $a
+  | [ $a[] | .name as $n | .dirs[] | {n: $n, d: .} ] as $all
+  | ( [ if any($a[]; .name == $c.default) then empty else "default account \"\($c.default)\" is not defined" end ]
+    + [ $a[] | select(.name == $c.default and (.dirs | length) > 0) | "the default account (\(.name)) cannot have dirs" ]
+    + [ $all[] as $x | $all[] | select(.n < $x.n and (.d | overlaps($x.d))) | "\(.d) (\(.n)) overlaps \($x.d) (\($x.n))" ]
+    + [ $a[] as $x | $a[] | select(.name < $x.name and .configDir == $x.configDir) | "\(.name) and \($x.name) share config dir \(.configDir)" ]
+    ) | .[]'
+
+# update_config JQ-ARGS... FILTER: rewrite the config, refusing a result that has problems
+update_config() {
+  local tmp="$CONFIG.tmp" problems
+  jql "$@" "$CONFIG" > "$tmp" || { rm -f "$tmp"; die "could not update $CONFIG"; }
+  problems="$(jql -r "$CHECK" "$tmp")" || { rm -f "$tmp"; die "could not check $CONFIG"; }
+  if [ -n "$problems" ]; then rm -f "$tmp"; die "$problems"; fi
+  mv "$tmp" "$CONFIG"
+}
+
+account_exists() { jq -e --arg n "$1" '.accounts | has($n)' "$CONFIG" >/dev/null; }
+
+valid_name() {
+  case "$1" in
+    ''|-*|*[!abcdefghijklmnopqrstuvwxyz0123456789-]*) die "account names use lowercase letters, digits and -: '$1'" ;;
+  esac
+}
+
+# Store paths absolute, with $HOME written as ~ so the config reads the same on every machine
+# shellcheck disable=SC2088  # the literal ~ is what gets stored
+store_path() {
+  local p="$1"
+  case "$p" in "~"|"~/"*|/*) ;; *) p="$PWD/$p" ;; esac
+  case "$p" in "$HOME") p="~" ;; "$HOME"/*) p="~/${p#"$HOME"/}" ;; esac
+  [ "$p" = "/" ] || p="${p%/}"
+  printf '%s' "$p"
+}
+
+cmd_init() {
+  if [ -f "$CONFIG" ]; then echo "Config already exists: $CONFIG"; return 0; fi
+  mkdir -p "$CONFIG_DIR"
+  jq -n '{default: "personal", accounts: {personal: {label: "PERSONAL", emoji: "🟢", configDir: "~/.claude"}}}' > "$CONFIG"
+  echo "Created $CONFIG with the personal account (~/.claude)."
+  echo "Next: claude-accounts add work --dir ~/path/to/work && claude-accounts apply"
+}
+
+cmd_add() {
+  local name="${1:-}" dirs='[]' label='' emoji='' cdir=''
+  [ -n "$name" ] || die "usage: claude-accounts add <name> [--dir PATH]... [--label L] [--emoji E] [--config-dir D]"
+  shift
+  valid_name "$name"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dir|--label|--emoji|--config-dir)
+        [ $# -ge 2 ] || die "$1 needs a value"
+        case "$1" in
+          --dir) dirs="$(jq -c --arg d "$(store_path "$2")" '. + [$d]' <<<"$dirs")" ;;
+          --label) label="$2" ;;
+          --emoji) emoji="$2" ;;
+          --config-dir) cdir="$(store_path "$2")" ;;
+        esac
+        shift 2 ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+  load_config
+  if account_exists "$name"; then die "account '$name' already exists"; fi
+  update_config --arg n "$name" --argjson dirs "$dirs" --arg label "$label" --arg emoji "$emoji" --arg cdir "$cdir" '
+    .accounts[$n] = ({dirs: $dirs}
+      + (if $label != "" then {label: $label} else {} end)
+      + (if $emoji != "" then {emoji: $emoji} else {} end)
+      + (if $cdir != "" then {configDir: $cdir} else {} end))'
+  echo "Added $name. Run 'claude-accounts apply' to set it up."
+}
+
+cmd_remove() {
+  local name="${1:-}"
+  [ -n "$name" ] || die "usage: claude-accounts remove <name>"
+  load_config
+  account_exists "$name" || die "no account '$name'"
+  [ "$(jq -r .default "$CONFIG")" != "$name" ] || die "cannot remove the default account"
+  update_config --arg n "$name" 'del(.accounts[$n])'
+  if [ -f "$STATE" ]; then need mise; cleanup_stale; fi
+  echo "Removed $name. Its config dir was kept."
+}
+
+cmd_set() {
+  local name="${1:-}" field="${2:-}" value="${3:-}"
+  [ -n "$name" ] && [ -n "$field" ] && [ $# -ge 3 ] || die "usage: claude-accounts set <name> label|emoji|configDir|dirs+|dirs- <value>"
+  load_config
+  account_exists "$name" || die "no account '$name'"
+  case "$field" in
+    label|emoji)
+      update_config --arg n "$name" --arg f "$field" --arg v "$value" '.accounts[$n][$f] = $v' ;;
+    configDir)
+      update_config --arg n "$name" --arg v "$(store_path "$value")" '.accounts[$n].configDir = $v' ;;
+    dirs+)
+      update_config --arg n "$name" --arg v "$(store_path "$value")" '.accounts[$n].dirs = ((.accounts[$n].dirs // []) + [$v] | unique)' ;;
+    dirs-)
+      update_config --arg n "$name" --arg v "$(store_path "$value")" 'include "lib";
+        .accounts[$n].dirs = [ (.accounts[$n].dirs // [])[] | select(norm != ($v | norm)) ]' ;;
+    *) die "unknown field '$field' (use label, emoji, configDir, dirs+ or dirs-)" ;;
+  esac
+  echo "Updated $name. Run 'claude-accounts apply' to put it into effect."
+}
+
+usage() {
+  cat <<'EOF'
+Usage: claude-accounts <command>
+
+  init                         create the config with a personal account (~/.claude)
+  add <name> [--dir PATH]...   add an account; options: --label, --emoji, --config-dir
+  remove <name>                remove an account (its config dir is kept)
+  set <name> <field> <value>   field: label, emoji, configDir, dirs+ (add a dir), dirs- (remove one)
+  apply [--marketplace SRC]    set up mise env, config dirs and the account-badge plugin
+  which [DIR] [--json]         show the account in use here (or in DIR) and the one expected
+  login <name>                 sign in to an account
+  shell-init fish|bash|zsh     print the Zed wrapper for your shell rc
+  doctor                       check the setup and say how to fix problems
+EOF
+}
+
+main() {
+  need jq
+  local cmd="${1:-help}"
+  [ $# -eq 0 ] || shift
+  case "$cmd" in
+    init) cmd_init "$@" ;;
+    add) cmd_add "$@" ;;
+    remove) cmd_remove "$@" ;;
+    set) cmd_set "$@" ;;
+    help|-h|--help) usage ;;
+    *) usage >&2; exit 1 ;;
+  esac
+}
+
+main "$@"

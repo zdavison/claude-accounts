@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Test stub for mise: logs each call and keeps mise.local.toml just real enough to inspect.
+echo "mise $*" >> "$STUB_LOG"
+case "$1" in
+  set)   # set --file FILE KEY=VALUE
+    printf '[env]\n%s = "%s"\n' "${4%%=*}" "${4#*=}" > "$3" ;;
+  unset) # unset --file FILE KEY
+    rm -f "$3" ;;
+  env)   # env -C DIR --json
+    v="$(sed -n 's/^CLAUDE_CONFIG_DIR = "\(.*\)"$/\1/p' "$3/mise.local.toml" 2>/dev/null)"
+    jq -n --arg v "$v" 'if $v == "" then {} else {CLAUDE_CONFIG_DIR: $v} end' ;;
+esac
+exit 0

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Test stub for claude: logs each call with the config dir it ran under, and remembers installs.
+echo "claude[${CLAUDE_CONFIG_DIR:-unset}] $*" >> "$STUB_LOG"
+installed="$STUB_DIR/installed"
+case "$1 ${2:-}" in
+  "--version ") echo "${STUB_CLAUDE_VERSION:-2.1.289} (Claude Code)" ;;
+  "plugin list")
+    if grep -qxF "${CLAUDE_CONFIG_DIR:-unset}" "$installed" 2>/dev/null; then
+      echo '[{"id":"account-badge@account-switcher","enabled":true}]'
+    else
+      echo '[]'
+    fi ;;
+  "plugin install") echo "${CLAUDE_CONFIG_DIR:-unset}" >> "$installed" ;;
+esac
+exit 0

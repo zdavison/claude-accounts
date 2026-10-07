@@ -34,3 +34,16 @@ resolve() { "$TEST_BASH" "$RESOLVE" "$@"; }
 
 # field NAME: a field of the JSON in $output, as jq -r prints it
 field() { jq -r ".$1" <<<"$output"; }
+
+cli() { "$TEST_BASH" "$CLI" "$@"; }
+
+config_json() { cat "$XDG_CONFIG_HOME/claude-accounts/accounts.json"; }
+
+# Put recording mise and claude stubs first on PATH; calls are logged to $STUB_LOG
+stub_tools() {
+  export STUB_LOG="$BATS_TEST_TMPDIR/stub.log" STUB_DIR="$BATS_TEST_TMPDIR"
+  : > "$STUB_LOG"
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cp "$BATS_TEST_DIRNAME/stubs/mise" "$BATS_TEST_DIRNAME/stubs/claude" "$BATS_TEST_TMPDIR/bin/"
+  export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+}
