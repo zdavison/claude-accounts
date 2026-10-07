@@ -6,6 +6,13 @@ setup() {
   stub_tools
   mkdir -p "$HOME/Work/acme" "$HOME/Clients/globex"
   export SHELL=/bin/bash
+  # Zed is "installed" only when a test creates this command, whatever is on the real machine
+  export CLAUDE_ACCOUNTS_EDITORS=test-zed
+}
+
+with_zed() {
+  printf '#!/bin/sh\n' > "$BATS_TEST_TMPDIR/bin/test-zed"
+  chmod +x "$BATS_TEST_TMPDIR/bin/test-zed"
 }
 
 # answer LINE...: run setup with these lines as the answers, in order
@@ -16,7 +23,7 @@ answer() { printf '%s\n' "$@" | cli setup; }
 FRESH=("" "" "" "" y work "" "" "" "~/Work/acme" "" n y n n)
 
 @test "setup walks a fresh machine through two accounts and applies them" {
-  run answer "${FRESH[@]}" n
+  run answer "${FRESH[@]}"
   [ "$status" -eq 0 ]
   [ "$(config_json | jq -c .)" = '{"default":"personal","accounts":{"personal":{"label":"PERSONAL","emoji":"🟢","configDir":"~/.claude"},"work":{"label":"WORK","emoji":"🔴","configDir":"~/.claude-work","dirs":["~/Work/acme"]}}}' ]
   grep -qxF "CLAUDE_CONFIG_DIR = \"$HOME/.claude-work\"" "$HOME/Work/acme/mise.local.toml"
@@ -86,28 +93,38 @@ FRESH=("" "" "" "" y work "" "" "" "~/Work/acme" "" n y n n)
   ! grep -qxF "claude[unset] auth login" "$STUB_LOG"
 }
 
-@test "setup adds the shell-init line to the shell rc when asked" {
+@test "with Zed installed, setup adds the shell-init line to the shell rc without asking" {
+  with_zed
   export SHELL=/usr/bin/fish
-  run answer "${FRESH[@]}" y
+  run answer "${FRESH[@]}"
   [ "$status" -eq 0 ]
   grep -qxF "claude-accounts shell-init fish | source" "$HOME/.config/fish/config.fish"
+  [[ "$output" != *"Add '"* ]]
 }
 
-@test "setup uses the rc file and syntax for bash and zsh" {
-  run answer "${FRESH[@]}" y
+@test "with Zed installed, setup uses the rc file and syntax for bash and zsh" {
+  with_zed
+  run answer "${FRESH[@]}"
   grep -qxF 'eval "$(claude-accounts shell-init bash)"' "$HOME/.bashrc"
   rm "$XDG_CONFIG_HOME/claude-accounts/accounts.json"
   export SHELL=/bin/zsh
-  run answer "${FRESH[@]}" y
+  run answer "${FRESH[@]}"
   grep -qxF 'eval "$(claude-accounts shell-init zsh)"' "$HOME/.zshrc"
 }
 
-@test "setup doesn't offer the shell-init line when the rc already has it" {
+@test "setup doesn't add the shell-init line twice" {
+  with_zed
   echo 'eval "$(claude-accounts shell-init bash)"' > "$HOME/.bashrc"
-  # no answer for the rc question: setup must not ask it
   run answer "${FRESH[@]}"
   [ "$status" -eq 0 ]
   [ "$(grep -c shell-init "$HOME/.bashrc")" -eq 1 ]
+}
+
+@test "without Zed, setup leaves the shell rc alone and doesn't mention it" {
+  run answer "${FRESH[@]}"
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/.bashrc" ]
+  [[ "$output" != *"Zed"* ]]
 }
 
 @test "setup stops cleanly when input runs out" {

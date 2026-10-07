@@ -11,5 +11,8 @@ case "$1 ${2:-}" in
       echo '[]'
     fi ;;
   "plugin install") echo "${CLAUDE_CONFIG_DIR:-unset}" >> "$installed" ;;
+  "plugin uninstall")
+    grep -vxF "${CLAUDE_CONFIG_DIR:-unset}" "$installed" > "$installed.tmp" 2>/dev/null || true
+    mv "$installed.tmp" "$installed" ;;
 esac
 exit 0

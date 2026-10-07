@@ -42,16 +42,9 @@ mise use -g npm:@zdavison/claude-accounts
 
 You can also use npm: `npm install -g @zdavison/claude-accounts`. Then run `claude-accounts setup`.
 
-The installed package installs the plugin from the GitHub repository. You can also clone the repository and add its `bin/` directory to your `PATH`. Then the clone is the source of the plugin. To use a different source, set `CLAUDE_ACCOUNTS_MARKETPLACE` or use `apply --marketplace`.
+## Setup
 
-### Upgrade
-
-1. Run the installer again, or upgrade the package with mise or npm.
-2. For each account, run `claude plugin update account-badge@account-switcher` with the `CLAUDE_CONFIG_DIR` of that account.
-
-## Set up
-
-Run the setup command:
+Run the setup command to configure `claude-accounts` at any time.
 
 ```sh
 claude-accounts setup
@@ -62,12 +55,6 @@ The setup command asks which accounts you want. For each account, it asks for th
 - the label and the emoji
 - the config directory
 - the directories that the account owns
-
-Then the setup command does these steps:
-
-1. It applies the configuration.
-2. It offers to sign in to each account.
-3. It offers to add the Zed wrapper to your shell rc file.
 
 To add accounts later, run the setup command again. You can also start again from an empty configuration.
 
@@ -88,13 +75,30 @@ claude-accounts apply
 claude-accounts login work
 ```
 
-Then add the Zed wrapper to your shell rc file:
+If you use Zed, add the Zed wrapper to your shell rc file:
 
 ```sh
 claude-accounts shell-init fish | source          # fish
 eval "$(claude-accounts shell-init bash)"         # bash
 eval "$(claude-accounts shell-init zsh)"          # zsh
 ```
+
+## Uninstall
+
+Run the uninstall command:
+
+```sh
+claude-accounts uninstall
+```
+
+The uninstall command shows what it removes and asks you to confirm. It removes these items:
+
+- `CLAUDE_CONFIG_DIR` from the `mise.local.toml` file in each directory of an account
+- the `account-badge` plugin from each account
+- the Zed wrapper from your shell rc file
+- the configuration in `~/.config/claude-accounts`
+
+The uninstall command keeps your Claude config directories, with your logins and history. Then it shows the command that removes the `claude-accounts` package.
 
 ## How it works
 
@@ -127,6 +131,7 @@ The configuration file is `~/.config/claude-accounts/accounts.json`. claude-acco
 | `login <name>` | Sign in to an account |
 | `shell-init fish\|bash\|zsh` | Print the Zed wrapper |
 | `doctor` | Check the setup and show how to fix problems |
+| `uninstall [--yes]` | Undo the setup. Your Claude config directories stay on disk. |
 
 The plugin has one option, `label_replies`. If you set `label_replies`, Claude starts each reply with the account label. The default is off. To set the option, run `/plugin configure account-badge@account-switcher` in Claude Code.
 
@@ -134,38 +139,4 @@ The plugin has one option, `label_replies`. If you set `label_replies`, Claude s
 
 - claude-accounts does not support Windows.
 - claude-accounts does not support direnv.
-- Zed is the only editor that claude-accounts supports.
 - In the Claude Desktop app, the badge can show `⚠ account unknown`. Plugins in the Desktop app cannot run the script that finds the account.
-
-## Releasing
-
-Releases go to npm and GitHub with [pubz](https://github.com/zdavison/pubz).
-
-Before a release, do these manual checks. The tests do not cover them.
-
-1. In the CLI, make sure that the badge shows the correct account and email for two accounts.
-2. In Zed, open a project of the default account. Make sure that the Notice shows the default account.
-3. In Zed, open a work project. Make sure that the Notice shows the work account.
-4. In a work directory, run `env -u CLAUDE_CONFIG_DIR claude`. Make sure that the badge shows `⚠ PERSONAL, but this dir belongs to WORK`.
-
-To make a release, run the **publish** workflow:
-
-1. On GitHub, open **Actions**.
-2. Select the **publish** workflow.
-3. Select patch, minor, or major, and run the workflow.
-
-The workflow does these steps:
-
-1. It runs the tests.
-2. It sets the version in `package.json` and in the plugin with `scripts/set-version`.
-3. It runs `pubz --ci`. pubz publishes to npm, adds a tag, and creates the GitHub release.
-
-To make a release from your machine, run `bunx pubz --version "$(scripts/set-version patch)"`.
-
-Each release must change the version of the plugin. Claude Code caches plugins by version.
-
-The publish workflow uses npm trusted publishing. You can set up trusted publishing only after the package exists on npm. Thus, make the first release from your machine:
-
-1. Run `npm login`.
-2. Make the release from your machine.
-3. On npmjs.com, open the settings of the package. Add a trusted publisher with the repository `zdavison/claude-accounts` and the workflow `publish.yml`.

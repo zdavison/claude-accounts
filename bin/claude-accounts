@@ -23,6 +23,8 @@ PLUGIN_ID="account-badge@account-switcher"
 GITHUB_REPO="zdavison/claude-accounts"
 if [ -e "$ROOT/.git" ]; then DEFAULT_MARKETPLACE="$ROOT"; else DEFAULT_MARKETPLACE="$GITHUB_REPO"; fi
 MIN_CLAUDE="2.1.289"
+# Zed's command names (Arch installs it as zeditor); the tests replace them
+EDITORS="${CLAUDE_ACCOUNTS_EDITORS:-zed zeditor}"
 
 die() { printf 'claude-accounts: %s\n' "$*" >&2; exit 1; }
 
@@ -284,7 +286,7 @@ cmd_shell_init() {
   if [ "$shell" = fish ]; then echo 'set -gx CLAUDE_ACCOUNTS_SHELL_INIT 1'; else echo 'export CLAUDE_ACCOUNTS_SHELL_INIT=1'; fi
   # One Zed process serves every window and keeps the environment it started with, so start it
   # without an account's CLAUDE_CONFIG_DIR; each project then gets its own from mise.
-  for editor in zed zeditor; do
+  for editor in $EDITORS; do
     path="$(command -v "$editor" 2>/dev/null)" || continue
     case "$path" in *"'"*) continue ;; esac
     if [ "$shell" = fish ]; then
@@ -293,6 +295,12 @@ cmd_shell_init() {
       printf "%s() { env -u CLAUDE_CONFIG_DIR '%s' \"\$@\"; }\n" "$editor" "$path"
     fi
   done
+}
+
+zed_installed() {
+  local editor
+  for editor in $EDITORS; do command -v "$editor" >/dev/null 2>&1 && return 0; done
+  return 1
 }
 
 DOCTOR_FAILED=0
@@ -311,7 +319,7 @@ cmd_doctor() {
   fi
   if [ -n "${MISE_SHELL:-}" ]; then ok "mise is activated in this shell"
   else bad "mise is not activated in this shell" "activate mise in your shell rc (https://mise.jdx.dev/getting-started.html)"; fi
-  if command -v zed >/dev/null 2>&1 || command -v zeditor >/dev/null 2>&1; then
+  if zed_installed; then
     if [ -n "${CLAUDE_ACCOUNTS_SHELL_INIT:-}" ]; then ok "Zed wrapper active"
     else bad "Zed wrapper not active" "fish: claude-accounts shell-init fish | source; bash/zsh: eval \"\$(claude-accounts shell-init bash)\""; fi
   fi
@@ -466,29 +474,27 @@ show_accounts() {
       + (if .key == $d then "  default: used everywhere else" else "  for " + ((.value.dirs // []) | join(", ")) end)' <<<"$1"
 }
 
-# offer_shell_rc: add the shell-init line to the user's shell rc, once
-offer_shell_rc() {
-  local shell rc line
-  local shown
+# Comment written above the shell-init line, so uninstall can find what setup added
+RC_COMMENT="# Start Zed without an account's CLAUDE_CONFIG_DIR (claude-accounts)"
+
+# add_shell_rc: when Zed is installed, add the shell-init line to the user's shell rc, once
+add_shell_rc() {
+  local shell rc line shown
+  zed_installed || return 0
   shell="$(basename "${SHELL:-}")"
   case "$shell" in
     fish) rc="${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish"; line='claude-accounts shell-init fish | source' ;;
     bash) rc="$HOME/.bashrc"; line='eval "$(claude-accounts shell-init bash)"' ;;
     zsh) rc="${ZDOTDIR:-$HOME}/.zshrc"; line='eval "$(claude-accounts shell-init zsh)"' ;;
-    *) echo "Add the Zed wrapper to your shell rc: see claude-accounts shell-init"; return 0 ;;
+    *) echo "Zed is installed: add the Zed wrapper to your shell rc (see claude-accounts shell-init)"; return 0 ;;
   esac
   shown="$(tilde "$rc")"
   if grep -q 'claude-accounts shell-init' "$rc" 2>/dev/null; then
-    echo "✔ $shown already loads claude-accounts shell-init"; return 0
+    echo "✔ $shown already loads the Zed wrapper"; return 0
   fi
-  echo "Zed keeps the environment it starts with, so it must start without an account's CLAUDE_CONFIG_DIR."
-  if confirm "Add '$line' to $shown?" y; then
-    mkdir -p "$(dirname "$rc")"
-    printf '\n# Start Zed without an account'"'"'s CLAUDE_CONFIG_DIR (claude-accounts)\n%s\n' "$line" >> "$rc"
-    echo "✔ added to $shown"
-  else
-    echo "  Skipped. Add it yourself later: $line"
-  fi
+  mkdir -p "$(dirname "$rc")"
+  printf '\n%s\n%s\n' "$RC_COMMENT" "$line" >> "$rc"
+  echo "✔ Zed is installed: added the Zed wrapper to $shown"
 }
 
 cmd_setup() {
@@ -548,9 +554,97 @@ cmd_setup() {
   done 3< <(jql -r 'include "lib"; accounts[] | [.name, .configDir] | @tsv' "$CONFIG")
   echo
 
-  offer_shell_rc
+  add_shell_rc
   echo
-  echo "Done. Open a new shell (so mise and the Zed wrapper load), then check everything with: claude-accounts doctor"
+  echo "Done. Open a new shell so that mise loads the new setup. Then check everything with: claude-accounts doctor"
+}
+
+# ---- uninstall: undo what setup and apply did ----
+
+# rc_files: the shell rc files that load the Zed wrapper
+rc_files() {
+  local rc
+  for rc in "${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish" "$HOME/.bashrc" "${ZDOTDIR:-$HOME}/.zshrc"; do
+    if grep -q 'claude-accounts shell-init' "$rc" 2>/dev/null; then printf '%s\n' "$rc"; fi
+  done
+}
+
+# strip_rc FILE: remove the shell-init lines and the comment setup wrote above them (with the blank
+# line before it). Writes in place, so a symlinked rc (for example from a dotfiles repo) stays a link.
+strip_rc() {
+  local tmp="$1.claude-accounts.tmp"
+  awk -v c="$RC_COMMENT" '
+    $0 == "" { if (held) print ""; held = 1; next }
+    $0 == c { held = 0; next }
+    index($0, "claude-accounts shell-init") { next }
+    { if (held) { print ""; held = 0 } print }
+    END { if (held) print "" }' "$1" > "$tmp" || { rm -f "$tmp"; die "could not edit $1"; }
+  cat "$tmp" > "$1"
+  rm -f "$tmp"
+}
+
+# each PREFIX LINES: print PREFIX and each non-empty line (a path) with ~ for $HOME
+each() {
+  local line
+  while IFS= read -r line; do [ -z "$line" ] || echo "$1 $(tilde "$line")"; done <<<"$2"
+}
+
+cmd_uninstall() {
+  local yes=false dirs cdirs rcs dir cdir rc
+  case "${1:-}" in
+    --yes|-y) yes=true ;;
+    '') ;;
+    *) die "usage: claude-accounts uninstall [--yes]" ;;
+  esac
+  need mise claude
+
+  # Directories with our env: those an earlier apply recorded, and those the config lists now
+  dirs="$( { jq -r '(.managedDirs // [])[]' "$STATE" 2>/dev/null || true
+             jql -r 'include "lib"; accounts[] | .dirs[]' "$CONFIG" 2>/dev/null || true; } | sort -u)"
+  cdirs="$( { printf '%s\n' "$HOME/.claude"
+              jql -r 'include "lib"; accounts[] | .configDir' "$CONFIG" 2>/dev/null || true; } | sort -u)"
+  rcs="$(rc_files)"
+
+  echo "This removes:"
+  each "  - CLAUDE_CONFIG_DIR from mise.local.toml in" "$dirs"
+  each "  - the account-badge plugin from" "$cdirs"
+  each "  - the Zed wrapper from" "$rcs"
+  echo "  - the configuration in $(tilde "$CONFIG_DIR")"
+  echo "It keeps your Claude config directories, with your logins and history."
+  echo
+  if [ "$yes" = false ]; then confirm "Uninstall claude-accounts?" n || die "nothing changed"; fi
+
+  while IFS= read -r dir <&3; do
+    [ -n "$dir" ] && [ -f "$dir/mise.local.toml" ] || continue
+    mise unset --file "$dir/mise.local.toml" CLAUDE_CONFIG_DIR >/dev/null || die "mise unset failed in $dir"
+    echo "✔ $(tilde "$dir") no longer sets CLAUDE_CONFIG_DIR"
+  done 3<<<"$dirs"
+
+  while IFS= read -r cdir <&3; do
+    [ -d "$cdir" ] || continue
+    if plugin_installed "$cdir"; then
+      claude_as "$cdir" plugin uninstall "$PLUGIN_ID" >/dev/null || die "could not uninstall $PLUGIN_ID from $cdir"
+      echo "✔ removed account-badge from $(tilde "$cdir")"
+    fi
+    claude_as "$cdir" plugin marketplace remove account-switcher >/dev/null 2>&1 || true
+  done 3<<<"$cdirs"
+
+  while IFS= read -r rc <&3; do
+    [ -n "$rc" ] || continue
+    strip_rc "$rc"
+    echo "✔ removed the Zed wrapper from $(tilde "$rc")"
+  done 3<<<"$rcs"
+
+  rm -rf "$CONFIG_DIR"
+  echo "✔ removed $(tilde "$CONFIG_DIR")"
+  echo
+  echo "Kept your Claude config directories:"
+  while IFS= read -r cdir; do [ -d "$cdir" ] && echo "  $(tilde "$cdir")"; done <<<"$cdirs"
+  echo
+  echo "To remove the claude-accounts command too, run one of these:"
+  echo "  mise unuse -g npm:@zdavison/claude-accounts"
+  echo "  npm uninstall -g @zdavison/claude-accounts"
+  [ ! -e "$ROOT/.git" ] || echo "  or delete the clone at $(tilde "$ROOT")"
 }
 
 usage() {
@@ -567,6 +661,7 @@ Usage: claude-accounts <command>
   login <name>                 sign in to an account
   shell-init fish|bash|zsh     print the Zed wrapper for your shell rc
   doctor                       check the setup and say how to fix problems
+  uninstall [--yes]            undo setup and apply (keeps your Claude config directories)
 EOF
 }
 
@@ -585,6 +680,7 @@ main() {
     login) cmd_login "$@" ;;
     shell-init) cmd_shell_init "$@" ;;
     doctor) cmd_doctor "$@" ;;
+    uninstall) cmd_uninstall "$@" ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 1 ;;
   esac
