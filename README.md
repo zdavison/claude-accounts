@@ -1,7 +1,8 @@
 # claude-accounts
 
 `claude-accounts` lets you use multiple Claude subscriptions at the same time.\
-This is useful if you want to use a personal and work account at the same time.
+Each account gets its own separate ~/.claude directory, so each `claude` is totally separate.\
+This is useful if you want to use a personal and work account on the same machine.
 
 It binds specific `claude` accounts to specific directories, so you can have all children of your `work` directory use your work account, for example.
 
